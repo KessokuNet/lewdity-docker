@@ -44,6 +44,11 @@ RUN git clone https://github.com/diamondburned/dol-server /src \
  && cd /src && git checkout ${DOL_SERVER_REF}
 
 WORKDIR /src
+
+# Our fixes on top of upstream dol-server; see patches/dol-server/
+COPY patches/dol-server /patches
+RUN git apply --verbose /patches/*.patch
+
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/dol-server .
 
 # Bundle dol-server's extension JS.
