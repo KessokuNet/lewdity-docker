@@ -1,5 +1,6 @@
 ARG GAME_VERSION=master
 ARG SOURCE=https://gitgud.io/Vrelnir/degrees-of-lewdity.git
+ARG VANILLA_SOURCE=https://gitgud.io/Vrelnir/degrees-of-lewdity.git
 ARG DOL_SERVER_REF=0c2cfd3c62b512ea5dca297d35d7b71ba5fefe62
 ARG ESBUILD_VERSION=0.25.5
 ARG GO_VERSION=1.21
@@ -8,6 +9,7 @@ FROM node:latest AS builder
 
 ARG GAME_VERSION
 ARG SOURCE
+ARG VANILLA_SOURCE
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends git-lfs \
@@ -24,14 +26,28 @@ RUN git lfs install --local && git lfs pull --exclude="*.zip"
 RUN npm install
 RUN ./compile.sh
 
+# Forks can be missing vanilla images their code still uses (DoLX 0.22.3
+# deleted weather banners and clouds it still loads). Fetch the vanilla
+# release the fork is based on, named by the first word of its version file,
+# so its images can go underneath the fork's.
+RUN if [ "${SOURCE}" != "${VANILLA_SOURCE}" ]; then \
+      base="$(cut -d' ' -f1 version)" \
+      && echo "Overlaying onto vanilla ${base} images" \
+      && git clone --depth 1 --branch "${base}" --filter=blob:none --sparse \
+           "${VANILLA_SOURCE}" /vanilla \
+      && git -C /vanilla sparse-checkout set img; \
+    fi
+
 # Collect what the game needs at runtime. compile.sh makes
 # "Degrees of Lewdity.html" a symlink to the versioned build; dol-server wants
 # exactly one HTML file, so copy just that one with the link resolved.
 # img2/, audio/ and imagepacks/ only exist in some forks (e.g. DoLX).
+# Vanilla images (if fetched above) go first so the fork's own files win.
 RUN mkdir /dist \
  && cp -L "Degrees of Lewdity.html" /dist/ \
+ && if [ -d /vanilla/img ]; then cp -r /vanilla/img /dist/; fi \
  && for dir in img img2 audio imagepacks; do \
-      if [ -d "$dir" ]; then cp -r "$dir" /dist/; fi; \
+      if [ -d "$dir" ]; then mkdir -p "/dist/$dir" && cp -r "$dir/." "/dist/$dir/"; fi; \
     done
 
 # Compile dol-server, the Go server that serves the game and syncs saves.
