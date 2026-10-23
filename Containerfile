@@ -9,12 +9,30 @@ FROM node:latest AS builder
 ARG GAME_VERSION
 ARG SOURCE
 
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends git-lfs \
+ && rm -rf /var/lib/apt/lists/*
+
 RUN git clone --depth 1 --branch ${GAME_VERSION} ${SOURCE} /app
 
 WORKDIR /app
 
+# Some forks keep assets in Git LFS (DoLX stores audio/ there), which a plain
+# clone leaves as pointer files. LFS zips are release archives we never ship.
+RUN git lfs install --local && git lfs pull --exclude="*.zip"
+
 RUN npm install
 RUN ./compile.sh
+
+# Collect what the game needs at runtime. compile.sh makes
+# "Degrees of Lewdity.html" a symlink to the versioned build; dol-server wants
+# exactly one HTML file, so copy just that one with the link resolved.
+# img2/, audio/ and imagepacks/ only exist in some forks (e.g. DoLX).
+RUN mkdir /dist \
+ && cp -L "Degrees of Lewdity.html" /dist/ \
+ && for dir in img img2 audio imagepacks; do \
+      if [ -d "$dir" ]; then cp -r "$dir" /dist/; fi; \
+    done
 
 # Compile dol-server, the Go server that serves the game and syncs saves.
 # Pinned to a commit because upstream has no release tags.
@@ -68,17 +86,9 @@ RUN apk add --no-cache ca-certificates
 
 COPY --from=dol-server-final /out/dol-server /usr/local/bin/dol-server
 
-RUN mkdir -p /app
-COPY --from=builder /app/*.html /app
-COPY --from=builder /app/img /app/img
+COPY --from=builder /dist /app
 
 WORKDIR /app
-# dol-server requires exactly one HTML file in the game directory, so the
-# duplicate copies have to go.
-# The thing is, the game symlinks "Degrees of Lewdity.html" to "Degrees of Lewdity ${GITSHA}.html",
-# but when we copy files over, it follows the symlink resulting in two copies of the same file.
-# So we need to remove the symlink and the duplicate file.
-RUN find /app -name "Degrees of Lewdity *.html" -type f -delete
 
 # Saves live here and must be mounted as a volume, otherwise they are lost
 # whenever the container is recreated.

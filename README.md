@@ -51,6 +51,20 @@ The game syncs its autosave to the server and back, so the same save is availabl
 
 There is no authentication. Anyone who can reach the container can read and overwrite the save, so don't expose it to the open internet. Keep it on a LAN or a private network such as [Tailscale].
 
+### DoLX
+
+An image of the [DoLX](https://gitgud.io/Akoz/dol-xchange) fork is published alongside the regular one. Its tags have a `-dolx` suffix, e.g. `latest-dolx` or `0.22.3-dolx`:
+
+```bash
+docker run -d \
+  --name lewdity-dolx \
+  -p 8080:80 \
+  -v lewdity-dolx-saves:/data \
+  ghcr.io/kessokunet/lewdity-docker:latest-dolx
+```
+
+It includes DoLX's audio and image packs, so it is much larger than the regular image. Give it its own save volume, otherwise the two games sync over each other's autosave.
+
 ## Building
 
 This image is built using the [`Containerfile`](Containerfile) in the root of the repository. You can build it using the following command:
@@ -60,6 +74,15 @@ docker build -f Containerfile -t lewdity .
 ```
 
 This will build the image and tag it as `lewdity`. You can then run the image using the same command as above.
+
+To build DoLX instead, point `SOURCE` at the fork and set `GAME_VERSION` to one of its releases:
+
+```bash
+docker build -f Containerfile \
+  --build-arg SOURCE=https://gitgud.io/Akoz/dol-xchange.git \
+  --build-arg GAME_VERSION=0.22.3 \
+  -t lewdity-dolx .
+```
 
 With [Podman](https://podman.io/) it's even shorter, as it detects the `Containerfile` automatically:
 

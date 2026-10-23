@@ -20,7 +20,7 @@ env:
   REGISTRY: ghcr.io
   # github.repository as <account>/<repo>
   IMAGE_NAME: ${{ github.repository }}
-  UPSTREAM_API: https://gitgud.io/api/v4/projects/Vrelnir%2Fdegrees-of-lewdity
+  GITLAB_API: https://gitgud.io/api/v4/projects
 
 jobs:
   fetch-upstream:
@@ -28,37 +28,67 @@ jobs:
     permissions:
       contents: write
     outputs:
-      sha: ${{ steps.get-sha.outputs.sha }}
-      version: ${{ steps.get-sha.outputs.version }}
+      sha: ${{ steps.upstream.outputs.sha }}
+      version: ${{ steps.upstream.outputs.version }}
+      dolx-sha: ${{ steps.dolx.outputs.sha }}
+      dolx-version: ${{ steps.dolx.outputs.version }}
     steps:
       - name: Get latest upstream release
-        id: get-sha
+        id: upstream
         run: |
-          curl -fsSL "${{ env.UPSTREAM_API }}/releases/permalink/latest" -o release.json
+          curl -fsSL "${{ env.GITLAB_API }}/Vrelnir%2Fdegrees-of-lewdity/releases/permalink/latest" -o release.json
           jq '{tag_name, released_at, commit: .commit.id}' release.json
-          echo "sha=$(jq -er '.commit.id' release.json)" >> $GITHUB_OUTPUT
-          echo "version=$(jq -er '.tag_name' release.json)" >> $GITHUB_OUTPUT
+          echo "sha=$(jq -er '.commit.id' release.json)" >> "$GITHUB_OUTPUT"
+          echo "version=$(jq -er '.tag_name' release.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Get latest DoLX release
+        id: dolx
+        run: |
+          curl -fsSL "${{ env.GITLAB_API }}/Akoz%2Fdol-xchange/releases/permalink/latest" -o release.json
+          jq '{tag_name, released_at, commit: .commit.id}' release.json
+          echo "sha=$(jq -er '.commit.id' release.json)" >> "$GITHUB_OUTPUT"
+          echo "version=$(jq -er '.tag_name' release.json)" >> "$GITHUB_OUTPUT"
+
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      - name: Write upstream SHA to file
+      - name: Write release refs to files
         run: |
-          echo "${{ steps.get-sha.outputs.sha }}" > UPSTREAM_REF.txt
-          echo "${{ steps.get-sha.outputs.version }}" > UPSTREAM_VERSION.txt
+          echo "${{ steps.upstream.outputs.sha }}" > UPSTREAM_REF.txt
+          echo "${{ steps.upstream.outputs.version }}" > UPSTREAM_VERSION.txt
+          echo "${{ steps.dolx.outputs.sha }}" > DOLX_REF.txt
+          echo "${{ steps.dolx.outputs.version }}" > DOLX_VERSION.txt
       - name: Commit and push changes
         # Only on main (push or schedule); PR and tag refs can't be pushed to
         if: github.ref == 'refs/heads/main'
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add UPSTREAM_REF.txt
-          git add UPSTREAM_VERSION.txt
-          git commit -m "Update upstream to ${{ steps.get-sha.outputs.version }} (${{ steps.get-sha.outputs.sha }})" || echo "No changes to commit"
+          git add UPSTREAM_REF.txt UPSTREAM_VERSION.txt DOLX_REF.txt DOLX_VERSION.txt
+          git commit \
+            -m "Update upstream to ${{ steps.upstream.outputs.version }}, DoLX to ${{ steps.dolx.outputs.version }}" \
+            -m "upstream: ${{ steps.upstream.outputs.sha }}" \
+            -m "DoLX: ${{ steps.dolx.outputs.sha }}" \
+            || echo "No changes to commit"
           git push origin HEAD:${{ github.ref }}
 
   build:
     needs: fetch-upstream
     runs-on: ubuntu-latest
+    strategy:
+      # One variant failing shouldn't stop the other from publishing
+      fail-fast: false
+      matrix:
+        include:
+          - variant: upstream
+            source: https://gitgud.io/Vrelnir/degrees-of-lewdity.git
+            version: ${{ needs.fetch-upstream.outputs.version }}
+            suffix: ""
+          # DoLX fork, published with a -dolx suffix on every tag
+          - variant: dolx
+            source: https://gitgud.io/Akoz/dol-xchange.git
+            version: ${{ needs.fetch-upstream.outputs.dolx-version }}
+            suffix: -dolx
     permissions:
       contents: write
       packages: write
@@ -101,9 +131,11 @@ jobs:
         uses: docker/metadata-action@96383f45573cb7f253c731d3b3ab81c87ef81934 # v5.0.0
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          flavor: |
+            suffix=${{ matrix.suffix }},onlatest=true
           tags: |
             type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
-            type=raw,value=${{ needs.fetch-upstream.outputs.version }},enable=${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+            type=raw,value=${{ matrix.version }},enable=${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
             type=semver,pattern={{version}}
             type=ref,event=branch
             type=ref,event=pr
@@ -119,10 +151,11 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           file: Containerfile
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=${{ matrix.variant }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.variant }}
           build-args: |
-            GAME_VERSION=${{ needs.fetch-upstream.outputs.version }}
+            SOURCE=${{ matrix.source }}
+            GAME_VERSION=${{ matrix.version }}
 
       # Sign the resulting Docker image digest except on PRs.
       # This will only write to the public Rekor transparency log when the Docker
