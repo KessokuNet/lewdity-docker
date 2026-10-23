@@ -17,7 +17,7 @@ docker run -d \
   --name lewdity \
   -p 8080:80 \
   -v lewdity-saves:/data \
-  ghcr.io/korewachino/lewdity-docker
+  ghcr.io/kessokunet/lewdity-docker
 ```
 
 This will run the container in detached mode, mapping port 8080 on the host to port 80 on the container. You can then access the game by going to `http://localhost:8080` in your web browser.
@@ -29,7 +29,7 @@ services:
     lewdity:
         ports:
             - 8080:80
-        image: ghcr.io/korewachino/lewdity-docker
+        image: ghcr.io/kessokunet/lewdity-docker
         volumes:
             - lewdity-saves:/data
 
