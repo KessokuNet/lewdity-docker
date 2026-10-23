@@ -1,0 +1,8 @@
+{
+  "game_path": "/app",
+  "extensions": {
+    "autosync": {
+      "save_path": "/data/autosync"
+    }
+  }
+}
