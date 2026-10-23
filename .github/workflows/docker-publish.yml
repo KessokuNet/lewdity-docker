@@ -20,7 +20,7 @@ env:
   REGISTRY: ghcr.io
   # github.repository as <account>/<repo>
   IMAGE_NAME: ${{ github.repository }}
-  UPSTREAM_REPO: https://gitgud.io/Vrelnir/degrees-of-lewdity
+  UPSTREAM_API: https://gitgud.io/api/v4/projects/Vrelnir%2Fdegrees-of-lewdity
 
 jobs:
   fetch-upstream:
@@ -31,15 +31,13 @@ jobs:
       sha: ${{ steps.get-sha.outputs.sha }}
       version: ${{ steps.get-sha.outputs.version }}
     steps:
-      - name: Checkout upstream
+      - name: Get latest upstream release
         id: get-sha
         run: |
-          git clone --depth 1 ${{ env.UPSTREAM_REPO }} upstream-repo
-          pushd upstream-repo
-          git rev-parse HEAD
-          echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
-          echo "version=$(cat version)" >> $GITHUB_OUTPUT
-          popd
+          curl -fsSL "${{ env.UPSTREAM_API }}/releases/permalink/latest" -o release.json
+          jq '{tag_name, released_at, commit: .commit.id}' release.json
+          echo "sha=$(jq -er '.commit.id' release.json)" >> $GITHUB_OUTPUT
+          echo "version=$(jq -er '.tag_name' release.json)" >> $GITHUB_OUTPUT
       - name: Checkout repository
         uses: actions/checkout@v5
 
@@ -48,15 +46,18 @@ jobs:
           echo "${{ steps.get-sha.outputs.sha }}" > UPSTREAM_REF.txt
           echo "${{ steps.get-sha.outputs.version }}" > UPSTREAM_VERSION.txt
       - name: Commit and push changes
+        # Only on main (push or schedule); PR and tag refs can't be pushed to
+        if: github.ref == 'refs/heads/main'
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add UPSTREAM_REF.txt
           git add UPSTREAM_VERSION.txt
-          git commit -m "Update UPSTREAM_REF.txt to ${{ steps.get-sha.outputs.sha }}" || echo "No changes to commit"
+          git commit -m "Update upstream to ${{ steps.get-sha.outputs.version }} (${{ steps.get-sha.outputs.sha }})" || echo "No changes to commit"
           git push origin HEAD:${{ github.ref }}
 
   build:
+    needs: fetch-upstream
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -68,12 +69,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
-
-      - name: Read upstream version
-        id: read-version
-        run: |
-          VERSION=$(cat UPSTREAM_VERSION.txt)
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       # Install the cosign tool except on PR
       # https://github.com/sigstore/cosign-installer
@@ -108,6 +103,7 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+            type=raw,value=${{ needs.fetch-upstream.outputs.version }},enable=${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
             type=semver,pattern={{version}}
             type=ref,event=branch
             type=ref,event=pr
@@ -126,7 +122,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: |
-            GAME_VERSION: ${{ steps.read-version.outputs.version }}
+            GAME_VERSION=${{ needs.fetch-upstream.outputs.version }}
 
       # Sign the resulting Docker image digest except on PRs.
       # This will only write to the public Rekor transparency log when the Docker

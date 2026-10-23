@@ -6,7 +6,7 @@ FROM node:latest as builder
 ARG GAME_VERSION
 ARG SOURCE
 
-RUN git clone ${SOURCE} --single-branch /app
+RUN git clone --depth 1 --branch ${GAME_VERSION} ${SOURCE} /app
 
 WORKDIR /app
 
